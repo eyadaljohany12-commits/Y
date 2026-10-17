@@ -1,0 +1,1002 @@
+name: Setup Shatr Chess960 Project
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-project:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create Project Files
+        run: |
+          mkdir -p lib/theme lib/engine lib/widgets lib/screens
+
+          cat << 'EOF' > pubspec.yaml
+          name: shatr
+          description: SHATR - Fischer Random Chess 960 with VisionOS Liquid Glassmorphism
+          publish_to: 'none'
+          version: 1.0.0+1
+
+          environment:
+            sdk: '>=3.3.0 <4.0.0'
+            flutter: '>=3.19.0'
+
+          dependencies:
+            flutter:
+              sdk: flutter
+            dartchess: ^0.9.0
+            cupertino_icons: ^1.0.6
+
+          flutter:
+            uses-material-design: true
+          EOF
+
+          cat << 'EOF' > analysis_options.yaml
+          include: package:flutter_lints/flutter.yaml
+
+          linter:
+            rules:
+              prefer_const_constructors: true
+              avoid_print: true
+          EOF
+
+          cat << 'EOF' > README.md
+          # SHATR - Chess 960
+
+          تطبيق شطرنج فيشر (960) بواجهة VisionOS Liquid Glassmorphism.
+
+          ## التشغيل
+          ```bash
+          flutter pub get
+          flutter run
+          ```
+          EOF
+
+          cat << 'EOF' > lib/main.dart
+          import 'package:flutter/material.dart';
+          import 'package:flutter/services.dart';
+          import 'theme/shatr_colors.dart';
+          import 'screens/home_screen.dart';
+
+          void main() {
+            WidgetsFlutterBinding.ensureInitialized();
+            SystemChrome.setSystemUIOverlayStyle(
+              const SystemUiOverlayStyle(
+                statusBarColor: Colors.transparent,
+                statusBarIconBrightness: Brightness.light,
+              ),
+            );
+            runApp(const ShatrApp());
+          }
+
+          class ShatrApp extends StatelessWidget {
+            const ShatrApp({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return MaterialApp(
+                title: 'SHATR - Chess 960',
+                debugShowCheckedModeBanner: false,
+                theme: ThemeData(
+                  brightness: Brightness.dark,
+                  scaffoldBackgroundColor: ShatrColors.background,
+                  useMaterial3: true,
+                  colorScheme: ColorScheme.dark(
+                    primary: ShatrColors.accentRed,
+                    surface: ShatrColors.surfaceDeep,
+                  ),
+                ),
+                home: const HomeScreen(),
+              );
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/theme/shatr_colors.dart
+          import 'package:flutter/material.dart';
+
+          class ShatrColors {
+            static const background    = Color(0xFF0A0A0F);
+            static const surfaceDeep   = Color(0xFF14141A);
+            static const accentRed     = Color(0xFFE63946);
+            static const accentRedGlow = Color(0x40E63946);
+            static const textPrimary   = Color(0xFFF5F5F7);
+            static const textSecondary = Color(0xFF9A9AA5);
+
+            static const boardLight       = Color(0xFF2A2A35);
+            static const boardDark        = Color(0xFF1A1A22);
+            static const highlightMove    = Color(0x8034C759);
+            static const highlightCapture = Color(0x80E63946);
+            static const highlightSelect  = Color(0x40E63946);
+          }
+          EOF
+
+          cat << 'EOF' > lib/engine/chess960_generator.dart
+          class Chess960Generator {
+            static const _lightBishop = [1, 3, 5, 7];
+            static const _darkBishop  = [0, 2, 4, 6];
+            static const _knightPairs = [
+              [0, 1], [0, 2], [0, 3], [0, 4],
+              [1, 2], [1, 3], [1, 4],
+              [2, 3], [2, 4],
+              [3, 4],
+            ];
+
+            static List<String> generate(int id) {
+              assert(id >= 0 && id < 960, 'Position ID must be in [0, 959]');
+              final rank = List<String?>.filled(8, null);
+              int n = id;
+
+              rank[_lightBishop[n % 4]] = 'B';
+              n ~/= 4;
+
+              rank[_darkBishop[n % 4]] = 'B';
+              n ~/= 4;
+
+              rank[_nthEmpty(rank, (n % 6) + 1)] = 'Q';
+              n ~/= 6;
+
+              final empty = _emptyIndices(rank);
+              final kp = _knightPairs[n];
+              rank[empty[kp[0]]] = 'N';
+              rank[empty[kp[1]]] = 'N';
+
+              final rem = _emptyIndices(rank);
+              rank[rem[0]] = 'R';
+              rank[rem[1]] = 'K';
+              rank[rem[2]] = 'R';
+
+              return rank.cast<String>();
+            }
+
+            static String toFen(int id) {
+              final rank = generate(id);
+              final back = rank.join();
+
+              final qIdx = rank.indexOf('R');
+              final kIdx = rank.lastIndexOf('R');
+              final qFile = String.fromCharCode(97 + qIdx);
+              final kFile = String.fromCharCode(97 + kIdx);
+
+              final white = '${qFile.toUpperCase()}${kFile.toUpperCase()}';
+              final black = '${qFile.toLowerCase()}${kFile.toLowerCase()}';
+
+              return '$back/pppppppp/8/8/8/8/PPPPPPPP/$back w $white$black - 0 1';
+            }
+
+            static List<int> _emptyIndices(List<String?> rank) {
+              final out = <int>[];
+              for (var i = 0; i < rank.length; i++) {
+                if (rank[i] == null) out.add(i);
+              }
+              return out;
+            }
+
+            static int _nthEmpty(List<String?> rank, int n) {
+              var count = 0;
+              for (var i = 0; i < rank.length; i++) {
+                if (rank[i] == null) {
+                  count++;
+                  if (count == n) return i;
+                }
+              }
+              throw StateError('No empty square');
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/widgets/glass_card.dart
+          import 'dart:ui';
+          import 'package:flutter/material.dart';
+
+          class GlassCard extends StatelessWidget {
+            final Widget child;
+            final double blur;
+            final double opacity;
+            final BorderRadius borderRadius;
+
+            const GlassCard({
+              super.key,
+              required this.child,
+              this.blur = 20,
+              this.opacity = 0.08,
+              this.borderRadius = const BorderRadius.all(Radius.circular(24)),
+            });
+
+            @override
+            Widget build(BuildContext context) {
+              return ClipRRect(
+                borderRadius: borderRadius,
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: blur, sigmaY: blur),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: opacity),
+                      borderRadius: borderRadius,
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.15)),
+                      gradient: LinearGradient(
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                        colors: [
+                          Colors.white.withValues(alpha: 0.12),
+                          Colors.white.withValues(alpha: 0.04),
+                        ],
+                      ),
+                    ),
+                    child: child,
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/screens/home_screen.dart
+          import 'package:flutter/material.dart';
+          import '../widgets/glass_card.dart';
+          import '../theme/shatr_colors.dart';
+          import 'game_screen.dart';
+          import 'settings_screen.dart';
+          import 'stats_screen.dart';
+
+          class HomeScreen extends StatelessWidget {
+            const HomeScreen({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(0.7, -0.6),
+                      radius: 1.5,
+                      colors: [Color(0xFF1A0A0D), ShatrColors.background],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 24),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          const Spacer(flex: 2),
+                          const Text(
+                            'شطر',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 64,
+                              fontWeight: FontWeight.w800,
+                              color: ShatrColors.textPrimary,
+                              letterSpacing: -2,
+                            ),
+                          ),
+                          const Text(
+                            'CHESS 960',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w500,
+                              color: ShatrColors.accentRed,
+                              letterSpacing: 6,
+                            ),
+                          ),
+                          const Spacer(flex: 2),
+                          _GlassButton(
+                            label: 'لعبة جديدة',
+                            icon: Icons.play_arrow_rounded,
+                            onTap: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => const GameScreen())),
+                          ),
+                          const SizedBox(height: 16),
+                          _GlassButton(
+                            label: 'الإحصائيات',
+                            icon: Icons.bar_chart_rounded,
+                            onTap: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => const StatsScreen())),
+                          ),
+                          const SizedBox(height: 16),
+                          _GlassButton(
+                            label: 'الإعدادات',
+                            icon: Icons.settings_rounded,
+                            onTap: () => Navigator.push(context,
+                                MaterialPageRoute(builder: (_) => const SettingsScreen())),
+                          ),
+                          const Spacer(flex: 3),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+
+          class _GlassButton extends StatefulWidget {
+            final String label;
+            final IconData icon;
+            final VoidCallback onTap;
+
+            const _GlassButton({
+              required this.label,
+              required this.icon,
+              required this.onTap,
+            });
+
+            @override
+            State<_GlassButton> createState() => _GlassButtonState();
+          }
+
+          class _GlassButtonState extends State<_GlassButton>
+              with SingleTickerProviderStateMixin {
+            late final AnimationController _c;
+            late final Animation<double> _s;
+
+            @override
+            void initState() {
+              super.initState();
+              _c = AnimationController(
+                vsync: this,
+                duration: const Duration(milliseconds: 150),
+              );
+              _s = Tween<double>(begin: 1.0, end: 0.96)
+                  .animate(CurvedAnimation(parent: _c, curve: Curves.easeOutCubic));
+            }
+
+            @override
+            void dispose() {
+              _c.dispose();
+              super.dispose();
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return GestureDetector(
+                onTapDown: (_) => _c.forward(),
+                onTapUp: (_) {
+                  _c.reverse();
+                  widget.onTap();
+                },
+                onTapCancel: () => _c.reverse(),
+                child: ScaleTransition(
+                  scale: _s,
+                  child: GlassCard(
+                    opacity: 0.06,
+                    blur: 15,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 18, horizontal: 24),
+                      child: Row(
+                        children: [
+                          Icon(widget.icon, color: ShatrColors.accentRed, size: 24),
+                          const SizedBox(width: 16),
+                          Text(
+                            widget.label,
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: ShatrColors.textPrimary,
+                            ),
+                          ),
+                          const Spacer(),
+                          Icon(
+                            Icons.arrow_back_ios_new_rounded,
+                            color: ShatrColors.textSecondary.withValues(alpha: 0.5),
+                            size: 16,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/screens/game_screen.dart
+          import 'package:dartchess/dartchess.dart';
+          import 'package:flutter/material.dart';
+          import '../engine/chess960_generator.dart';
+          import '../theme/shatr_colors.dart';
+          import '../widgets/glass_card.dart';
+
+          class GameScreen extends StatefulWidget {
+            const GameScreen({super.key});
+
+            @override
+            State<GameScreen> createState() => _GameScreenState();
+          }
+
+          class _GameScreenState extends State<GameScreen> {
+            late Position _position;
+            late int _positionId;
+            Square? _selected;
+            Map<Square, Set<Square>> _legal = {};
+            final List<String> _history = [];
+            String? _status;
+
+            @override
+            void initState() {
+              super.initState();
+              _positionId = DateTime.now().millisecondsSinceEpoch % 960;
+              _initPosition();
+            }
+
+            void _initPosition() {
+              final fen = Chess960Generator.toFen(_positionId);
+              try {
+                _position = Chess.fromSetup(Setup.parseFen(fen));
+              } catch (_) {
+                _position = Chess.initial;
+              }
+              _refresh();
+            }
+
+            void _refresh() {
+              final m = <Square, Set<Square>>{};
+              _position.legalMoves.forEach((from, to) => m[from] = to);
+              setState(() => _legal = m);
+              _updateStatus();
+            }
+
+            void _updateStatus() {
+              if (_position.isCheckmate) {
+                _status = 'كش مات — ${_position.turn == Side.white ? "الأسود يفوز" : "الأبيض يفوز"}';
+              } else if (_position.isStalemate) {
+                _status = 'تعادل — لا نقلات قانونية';
+              } else if (_position.isCheck) {
+                _status = 'كش!';
+              } else {
+                _status = null;
+              }
+            }
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(0.5, -0.5),
+                      radius: 1.2,
+                      colors: [Color(0xFF1A0A0D), ShatrColors.background],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Column(
+                      children: [
+                        _topBar(),
+                        if (_status != null) _statusBanner(),
+                        Expanded(
+                          flex: 3,
+                          child: Padding(
+                            padding: const EdgeInsets.all(12),
+                            child: _board(),
+                          ),
+                        ),
+                        Expanded(
+                          flex: 1,
+                          child: GlassCard(
+                            borderRadius:
+                                const BorderRadius.vertical(top: Radius.circular(24)),
+                            child: _historyPane(),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _topBar() {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Row(
+                  children: [
+                    GlassCard(
+                      opacity: 0.1,
+                      borderRadius: const BorderRadius.all(Radius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text('الوضعية',
+                                style: TextStyle(
+                                    fontSize: 10, color: ShatrColors.textSecondary)),
+                            Text('#$_positionId',
+                                style: const TextStyle(
+                                    fontSize: 20,
+                                    fontWeight: FontWeight.bold,
+                                    color: ShatrColors.accentRed)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const Spacer(),
+                    GlassCard(
+                      opacity: 0.1,
+                      borderRadius: const BorderRadius.all(Radius.circular(16)),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 10,
+                              height: 10,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _position.turn == Side.white
+                                    ? Colors.white
+                                    : ShatrColors.accentRed,
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _position.turn == Side.white
+                                        ? Colors.white54
+                                        : ShatrColors.accentRedGlow,
+                                    blurRadius: 8,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _position.turn == Side.white ? 'دور الأبيض' : 'دور الأسود',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: ShatrColors.textPrimary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
+
+            Widget _statusBanner() {
+              return Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: GlassCard(
+                  opacity: 0.15,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 16),
+                    child: Text(_status!,
+                        style: const TextStyle(
+                            color: ShatrColors.accentRed,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14)),
+                  ),
+                ),
+              );
+            }
+
+            Widget _board() {
+              return LayoutBuilder(builder: (_, c) {
+                final size = c.maxWidth;
+                final sq = size / 8;
+                return Center(
+                  child: Container(
+                    width: size,
+                    height: size,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.5),
+                          blurRadius: 30,
+                          offset: const Offset(0, 10),
+                        ),
+                      ],
+                    ),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Stack(children: [
+                        _squares(sq),
+                        ..._pieces(sq),
+                      ]),
+                    ),
+                  ),
+                );
+              });
+            }
+
+            Widget _squares(double sq) {
+              return Column(
+                children: List.generate(8, (rIdx) {
+                  final rank = 7 - rIdx;
+                  return Row(
+                    children: List.generate(8, (file) {
+                      final isLight = (file + rank) % 2 == 0;
+                      final square = Square.values.firstWhere(
+                          (s) => s.file == file && s.rank == rank);
+                      final isSel = _selected == square;
+                      final targets =
+                          _selected != null ? (_legal[_selected!] ?? {}) : <Square>{};
+                      final isTarget = targets.contains(square);
+                      final isCapture =
+                          isTarget && _position.board.pieceAt(square) != null;
+                      return GestureDetector(
+                        onTap: () => _onTap(square),
+                        child: Container(
+                          width: sq,
+                          height: sq,
+                          decoration: BoxDecoration(
+                            color: isLight
+                                ? ShatrColors.boardLight
+                                : ShatrColors.boardDark,
+                            border: isSel
+                                ? Border.all(color: ShatrColors.accentRed, width: 2)
+                                : null,
+                          ),
+                          child: Stack(children: [
+                            if (isTarget)
+                              Center(
+                                child: Container(
+                                  width: isCapture ? sq * 0.85 : sq * 0.3,
+                                  height: isCapture ? sq * 0.85 : sq * 0.3,
+                                  decoration: BoxDecoration(
+                                    shape: isCapture
+                                        ? BoxShape.rectangle
+                                        : BoxShape.circle,
+                                    borderRadius:
+                                        isCapture ? BorderRadius.circular(4) : null,
+                                    border: isCapture
+                                        ? Border.all(
+                                            color: ShatrColors.highlightCapture,
+                                            width: 3)
+                                        : null,
+                                    color: isCapture
+                                        ? Colors.transparent
+                                        : ShatrColors.highlightMove,
+                                    boxShadow: [
+                                      BoxShadow(
+                                          color: ShatrColors.highlightMove,
+                                          blurRadius: 8),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                          ]),
+                        ),
+                      );
+                    }),
+                  );
+                }),
+              );
+            }
+
+            List<Widget> _pieces(double sq) {
+              final out = <Widget>[];
+              for (var r = 0; r < 8; r++) {
+                for (var f = 0; f < 8; f++) {
+                  final s =
+                      Square.values.firstWhere((x) => x.file == f && x.rank == r);
+                  final p = _position.board.pieceAt(s);
+                  if (p == null) continue;
+                  out.add(Positioned(
+                    left: f * sq,
+                    top: (7 - r) * sq,
+                    width: sq,
+                    height: sq,
+                    child: GestureDetector(
+                      onTap: () => _onTap(s),
+                      child: Center(
+                        child: Text(
+                          _glyph(p),
+                          style: TextStyle(
+                            fontSize: sq * 0.65,
+                            color: p.color == Side.white
+                                ? Colors.white
+                                : ShatrColors.textPrimary,
+                            shadows: [
+                              Shadow(
+                                color: Colors.black.withValues(alpha: 0.6),
+                                blurRadius: 4,
+                                offset: const Offset(0, 1),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ));
+                }
+              }
+              return out;
+            }
+
+            String _glyph(Piece p) {
+              final w = p.color == Side.white;
+              switch (p.role) {
+                case Role.king:
+                  return w ? '♔' : '♚';
+                case Role.queen:
+                  return w ? '♕' : '♛';
+                case Role.rook:
+                  return w ? '♖' : '♜';
+                case Role.bishop:
+                  return w ? '♗' : '♝';
+                case Role.knight:
+                  return w ? '♘' : '♞';
+                case Role.pawn:
+                  return w ? '♙' : '♟';
+              }
+            }
+
+            void _onTap(Square s) {
+              if (_selected != null) {
+                final targets = _legal[_selected!] ?? {};
+                if (targets.contains(s)) {
+                  _move(_selected!, s);
+                  return;
+                }
+              }
+              final p = _position.board.pieceAt(s);
+              if (p != null && p.color == _position.turn) {
+                setState(() => _selected = s);
+              } else {
+                setState(() => _selected = null);
+              }
+            }
+
+            void _move(Square from, Square to) {
+              final fromPiece = _position.board.pieceAt(from);
+              final toPiece = _position.board.pieceAt(to);
+              NormalMove mv;
+              if (fromPiece?.role == Role.king &&
+                  toPiece?.role == Role.rook &&
+                  toPiece?.color == fromPiece?.color) {
+                mv = NormalMove(from: from, to: to);
+              } else if (fromPiece?.role == Role.pawn &&
+                  (to.rank == 7 || to.rank == 0)) {
+                mv = NormalMove(from: from, to: to, promotion: Role.queen);
+              } else {
+                mv = NormalMove(from: from, to: to);
+              }
+
+              try {
+                final np = _position.play(mv);
+                setState(() {
+                  _position = np;
+                  _selected = null;
+                  _history.add(mv.toString());
+                });
+                _refresh();
+              } catch (_) {
+                setState(() => _selected = null);
+              }
+            }
+
+            Widget _historyPane() {
+              return Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'سجل النقلات',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: ShatrColors.textSecondary,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Expanded(
+                      child: _history.isEmpty
+                          ? const Center(
+                              child: Text('لا توجد نقلات بعد',
+                                  style: TextStyle(color: ShatrColors.textSecondary)))
+                          : ListView.builder(
+                              itemCount: _history.length,
+                              itemBuilder: (_, i) => Text(
+                                '${i + 1}. ${_history[i]}',
+                                style: const TextStyle(
+                                  fontSize: 14,
+                                  color: ShatrColors.textPrimary,
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ),
+                    ),
+                  ],
+                ),
+              );
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/screens/settings_screen.dart
+          import 'package:flutter/material.dart';
+          import '../widgets/glass_card.dart';
+          import '../theme/shatr_colors.dart';
+
+          class SettingsScreen extends StatefulWidget {
+            const SettingsScreen({super.key});
+
+            @override
+            State<SettingsScreen> createState() => _SettingsScreenState();
+          }
+
+          class _SettingsScreenState extends State<SettingsScreen> {
+            bool _sound = true;
+            bool _haptic = true;
+            double _speed = 0.5;
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_rounded,
+                        color: ShatrColors.textPrimary),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  title: const Text('الإعدادات',
+                      style: TextStyle(color: ShatrColors.textPrimary)),
+                ),
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [ShatrColors.background, Color(0xFF1A0A0D)],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: ListView(
+                      padding: const EdgeInsets.all(20),
+                      children: [
+                        GlassCard(
+                          child: Column(children: [
+                            SwitchListTile(
+                              title: const Text('الأصوات',
+                                  style: TextStyle(color: ShatrColors.textPrimary)),
+                              value: _sound,
+                              activeColor: ShatrColors.accentRed,
+                              onChanged: (v) => setState(() => _sound = v),
+                            ),
+                            const Divider(color: Colors.white12),
+                            SwitchListTile(
+                              title: const Text('الاهتزاز',
+                                  style: TextStyle(color: ShatrColors.textPrimary)),
+                              value: _haptic,
+                              activeColor: ShatrColors.accentRed,
+                              onChanged: (v) => setState(() => _haptic = v),
+                            ),
+                          ]),
+                        ),
+                        const SizedBox(height: 20),
+                        GlassCard(
+                          child: Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text('سرعة الأنيميشن',
+                                    style: TextStyle(color: ShatrColors.textPrimary)),
+                                Slider(
+                                  value: _speed,
+                                  activeColor: ShatrColors.accentRed,
+                                  onChanged: (v) => setState(() => _speed = v),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            }
+          }
+          EOF
+
+          cat << 'EOF' > lib/screens/stats_screen.dart
+          import 'package:flutter/material.dart';
+          import '../widgets/glass_card.dart';
+          import '../theme/shatr_colors.dart';
+
+          class StatsScreen extends StatelessWidget {
+            const StatsScreen({super.key});
+
+            @override
+            Widget build(BuildContext context) {
+              return Scaffold(
+                extendBodyBehindAppBar: true,
+                appBar: AppBar(
+                  backgroundColor: Colors.transparent,
+                  elevation: 0,
+                  leading: IconButton(
+                    icon: const Icon(Icons.arrow_back_ios_rounded,
+                        color: ShatrColors.textPrimary),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  title: const Text('الإحصائيات',
+                      style: TextStyle(color: ShatrColors.textPrimary)),
+                ),
+                body: Container(
+                  decoration: const BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [ShatrColors.background, Color(0xFF1A0A0D)],
+                    ),
+                  ),
+                  child: SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.all(20),
+                      child: Column(children: [
+                        Row(children: [
+                          Expanded(child: _stat('انتصارات', '—', ShatrColors.accentRed)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _stat('خسائر', '—', ShatrColors.textSecondary)),
+                        ]),
+                        const SizedBox(height: 12),
+                        Row(children: [
+                          Expanded(child: _stat('تعادلات', '—', ShatrColors.textSecondary)),
+                          const SizedBox(width: 12),
+                          Expanded(child: _stat('نسبة الفوز', '—', ShatrColors.accentRed)),
+                        ]),
+                        const SizedBox(height: 20),
+                        GlassCard(
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Column(children: [
+                              const Icon(Icons.info_outline,
+                                  color: ShatrColors.textSecondary, size: 32),
+                              const SizedBox(height: 12),
+                              Text(
+                                'ستظهر إحصائياتك بعد لعب أول مباراة',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    color: ShatrColors.textSecondary
+                                        .withValues(alpha: 0.8)),
+                              ),
+                            ]),
+                          ),
+                        ),
+                      ]),
+                    ),
+                  ),
+                ),
+              );
+            }
+
+            Widget _stat(String label, String value, Color c) {
+              return GlassCard(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+                  child: Column(children: [
+                    Text(value,
+                        style: TextStyle(
+                            fontSize: 32, fontWeight: FontWeight.bold, color: c)),
+                    const SizedBox(height: 4),
+                    Text(label,
+                        style: const TextStyle(
+                            fontSize: 12, color: ShatrColors.textSecondary)),
+                  ]),
+                ),
+              );
+            }
+          }
+          EOF
+
+      - name: Commit and push generated files
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "Generate Flutter Chess960 Project Structure" || exit 0
+          git push
