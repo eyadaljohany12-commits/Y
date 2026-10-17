@@ -1,0 +1,17 @@
+name: shatr
+description: SHATR - Fischer Random Chess 960 with VisionOS Liquid Glassmorphism
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.3.0 <4.0.0'
+  flutter: '>=3.19.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  dartchess: ^0.9.0
+  cupertino_icons: ^1.0.6
+
+flutter:
+  uses-material-design: true
